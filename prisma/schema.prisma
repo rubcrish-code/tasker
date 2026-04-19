@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./tasker.db"
+}
+
+model KanbanColumn {
+  id        String   @id @default(cuid())
+  title     String
+  color     String   @default("#dff2e9")
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks Task[]
+}
+
+model Task {
+  id              String   @id @default(cuid())
+  title           String
+  description     String   @default("")
+  status          String   @default("BACKLOG")
+  priority        String   @default("MEDIUM")
+  dueDate         DateTime?
+  assigner        String   @default("")
+  assignee        String   @default("")
+  reminderHours   Int      @default(0)
+  reminderMinutes Int      @default(30)
+  activityAt      DateTime?
+  activityCount   Int      @default(0)
+  pinned          Boolean  @default(false)
+  isCompleted     Boolean  @default(false)
+  dueSoonNotifiedAt DateTime?
+  overdueNotifiedAt DateTime?
+  order           Int      @default(0)
+  columnId        String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  column         KanbanColumn   @relation(fields: [columnId], references: [id])
+  checklistItems ChecklistItem[]
+  notes          TaskNote[]
+  tags           TaskTag[]
+
+  @@index([columnId, order])
+  @@index([dueDate])
+  @@index([pinned])
+}
+
+model ChecklistItem {
+  id        String  @id @default(cuid())
+  taskId    String
+  title     String
+  completed Boolean @default(false)
+  order     Int     @default(0)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, order])
+}
+
+model Tag {
+  id    String @id @default(cuid())
+  name  String @unique
+  color String @default("#e3f3ec")
+
+  tasks TaskTag[]
+}
+
+model TaskTag {
+  taskId String
+  tagId  String
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+}
+
+model TaskNote {
+  id        String   @id @default(cuid())
+  taskId    String
+  body      String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+}

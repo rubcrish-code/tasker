@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu, Notification, Tray } from 'electron'
 import { join } from 'node:path'
 import { APP_NAME } from '@shared/app.constants'
 import { createAppIcon } from './app/icon'
@@ -12,6 +12,11 @@ app.setName(APP_NAME)
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.tasker.desktop')
 }
+
+let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
+let backgroundHintShown = false
 
 const loadRenderer = (mainWindow: BrowserWindow): void => {
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
@@ -35,8 +40,64 @@ const loadRenderer = (mainWindow: BrowserWindow): void => {
   loadDevServer()
 }
 
+const showBackgroundHint = (): void => {
+  if (backgroundHintShown || !Notification.isSupported()) {
+    return
+  }
+
+  backgroundHintShown = true
+  new Notification({
+    title: `${APP_NAME} работает в фоне`,
+    body: 'Окно скрыто, но напоминания о задачах продолжат приходить. Для полного выхода используйте меню в трее.',
+    icon: createAppIcon(),
+    silent: false
+  }).show()
+}
+
+const showMainWindow = (): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow()
+    return
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+const createTray = (): void => {
+  if (tray) {
+    return
+  }
+
+  tray = new Tray(createAppIcon())
+  tray.setToolTip(APP_NAME)
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Открыть Tasker',
+        click: showMainWindow
+      },
+      {
+        type: 'separator'
+      },
+      {
+        label: 'Выход',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        }
+      }
+    ])
+  )
+  tray.on('double-click', showMainWindow)
+}
+
 const createMainWindow = (): void => {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1120,
     height: 760,
     minWidth: 920,
@@ -53,28 +114,42 @@ const createMainWindow = (): void => {
   })
 
   loadRenderer(mainWindow)
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return
+    }
+
+    event.preventDefault()
+    mainWindow?.hide()
+    showBackgroundHint()
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 }
 
 app.whenReady().then(() => {
   registerTaskHandlers()
   ensureDefaultColumns().catch(console.error)
+  createTray()
   startNotificationScheduler()
   createMainWindow()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow()
-    }
+    showMainWindow()
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (isQuitting && process.platform !== 'darwin') {
     app.quit()
   }
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
   stopNotificationScheduler()
   disconnectPrisma().catch(console.error)
 })

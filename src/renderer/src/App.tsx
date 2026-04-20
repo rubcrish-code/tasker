@@ -4,6 +4,7 @@ import { APP_NAME, APP_VIEWS, type AppViewId } from '@shared/app.constants'
 import type { KanbanColumnDto, TaskAppState, TaskDto, TaskInput, TaskReorderItem } from '@shared/task.types'
 import { CalendarView } from './components/CalendarView'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { CheckLogoIcon, PlusIcon } from './components/Icons'
 import { KanbanBoard } from './components/KanbanBoard'
 import { TaskFormModal } from './components/TaskFormModal'
@@ -125,6 +126,16 @@ export const App = () => {
     }
   }
 
+  const runOptimisticAction = async (action: () => Promise<TaskAppState>): Promise<void> => {
+    setError(null)
+    try {
+      setAppState(await action())
+    } catch (unknownError) {
+      setError(unknownError instanceof Error ? unknownError.message : 'Действие не выполнено')
+      loadState().catch(console.error)
+    }
+  }
+
   const handleSidebarResizeStart = (event: ReactMouseEvent<HTMLButtonElement>): void => {
     event.preventDefault()
 
@@ -143,7 +154,40 @@ export const App = () => {
   }
 
   const handleTaskReorder = (items: TaskReorderItem[]): void => {
-    runAction(() => window.tasker.tasks.reorder(items)).catch(console.error)
+    if (items.length === 0) {
+      return
+    }
+
+    const updatesById = new Map(items.map((item) => [item.id, item]))
+    setAppState((current) => ({
+      ...current,
+      tasks: current.tasks.map((task) => {
+        const update = updatesById.get(task.id)
+        return update ? { ...task, columnId: update.columnId, order: update.order } : task
+      })
+    }))
+
+    runOptimisticAction(() => window.tasker.tasks.reorder(items)).catch(console.error)
+  }
+
+  const handleTaskDueDateMove = (task: TaskDto, dueDate: string): void => {
+    const activityAt = new Date().toISOString()
+
+    setAppState((current) => ({
+      ...current,
+      tasks: current.tasks.map((candidate) =>
+        candidate.id === task.id
+          ? {
+              ...candidate,
+              dueDate,
+              activityAt,
+              activityCount: candidate.activityCount + 1
+            }
+          : candidate
+      )
+    }))
+
+    runOptimisticAction(() => window.tasker.tasks.updateDueDate(task.id, dueDate)).catch(console.error)
   }
 
   const confirmDelete = async (): Promise<void> => {
@@ -243,22 +287,28 @@ export const App = () => {
         )}
 
         {!isLoading && activeView === 'kanban' && (
-          <KanbanBoard
-            columns={appState.columns}
-            tasks={appState.tasks}
-            onTaskEdit={openEditTask}
-            onReorder={handleTaskReorder}
-            onColumnCreate={(title, color) => runAction(() => window.tasker.columns.create(title, color)).catch(console.error)}
-            onColumnUpdate={(id, title, color) => runAction(() => window.tasker.columns.update(id, title, color)).catch(console.error)}
-            onColumnDelete={(column) => setConfirmState({ type: 'column', column })}
-          />
+          <ErrorBoundary
+            resetKey={activeView}
+            title="Канбан временно недоступен"
+            message="Произошла ошибка отображения доски. Данные сохранены, можно повторить без перезапуска приложения."
+          >
+            <KanbanBoard
+              columns={appState.columns}
+              tasks={appState.tasks}
+              onTaskEdit={openEditTask}
+              onReorder={handleTaskReorder}
+              onColumnCreate={(title, color) => runAction(() => window.tasker.columns.create(title, color)).catch(console.error)}
+              onColumnUpdate={(id, title, color) => runAction(() => window.tasker.columns.update(id, title, color)).catch(console.error)}
+              onColumnDelete={(column) => setConfirmState({ type: 'column', column })}
+            />
+          </ErrorBoundary>
         )}
 
         {!isLoading && activeView === 'calendar' && (
           <CalendarView
             tasks={appState.tasks}
             onTaskEdit={openEditTask}
-            onTaskMove={(task, dueDate) => runAction(() => window.tasker.tasks.updateDueDate(task.id, dueDate)).catch(console.error)}
+            onTaskMove={handleTaskDueDateMove}
           />
         )}
       </main>

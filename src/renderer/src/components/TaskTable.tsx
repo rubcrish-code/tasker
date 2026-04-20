@@ -4,7 +4,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { TagDto, TaskDto, TaskReorderItem } from '@shared/task.types'
 import { deadlineState, formatDateTime } from '../utils/date'
 import { checklistProgress, initials, personName } from '../utils/task'
-import { PinIcon, TrashIcon } from './Icons'
+import { GripIcon, PinIcon, TrashIcon } from './Icons'
 
 type TaskTableProps = {
   tasks: TaskDto[]
@@ -54,7 +54,7 @@ const SortableTaskRow = ({ task, onEdit, onDelete, onPinnedChange, onCompletedCh
       </td>
       <td className="task-drag-cell">
         <button className="drag-handle" type="button" aria-label="Перетащить задачу" {...attributes} {...listeners}>
-          ::
+          <GripIcon />
         </button>
       </td>
       <td className="task-title-cell">
@@ -73,12 +73,6 @@ const SortableTaskRow = ({ task, onEdit, onDelete, onPinnedChange, onCompletedCh
           </button>
         </div>
         <div className="task-subline">Чек-лист {checklistProgress(task)}</div>
-      </td>
-      <td>
-        <div className="activity-cell">
-          <span>{formatDateTime(task.activityAt ?? task.updatedAt)}</span>
-          {task.activityCount > 0 && <span className="activity-badge">{task.activityCount}</span>}
-        </div>
       </td>
       <td className="deadline-cell">
         <span className={`deadline-pill deadline-${state}`}>{formatDateTime(task.dueDate)}</span>
@@ -150,8 +144,7 @@ export const TaskTable = ({ tasks, onEdit, onDelete, onPinnedChange, onCompleted
                 <th aria-label="Выполнено" />
                 <th aria-label="Порядок" />
                 <th>Название</th>
-                <th>Активность</th>
-                <th className="deadline-head">Крайний срок</th>
+                <th className="deadline-head">Срок</th>
                 <th>Постановщик</th>
                 <th>Исполнитель</th>
                 <th>Теги</th>

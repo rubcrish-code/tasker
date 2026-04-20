@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import {
   closestCorners,
   DndContext,
@@ -17,7 +17,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { KanbanColumnDto, TaskDto, TaskReorderItem } from '@shared/task.types'
 import { formatDateTime } from '../utils/date'
 import { checklistProgress } from '../utils/task'
-import { CloseIcon } from './Icons'
+import { CloseIcon, GripIcon } from './Icons'
 
 type KanbanBoardProps = {
   columns: KanbanColumnDto[]
@@ -32,21 +32,28 @@ type KanbanBoardProps = {
 type KanbanColumnProps = {
   column: KanbanColumnDto
   tasks: TaskDto[]
+  placeholderIndex: number | null
+  placeholderTask: TaskDto | null
   onTaskEdit: (task: TaskDto) => void
   onColumnUpdate: (id: string, title: string, color: string) => void
   onColumnDelete: (column: KanbanColumnDto) => void
 }
 
-type DragPreview = {
+type DragState = {
   activeId: string
   overId: string | null
 } | null
 
-const defaultColumnColor = '#dff2e9'
-const kanbanDropAnimation = {
-  duration: 220,
-  easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+type DragPlacement = {
+  activeTask: TaskDto
+  sourceColumnId: string
+  targetColumnId: string
+  targetIndex: number
+  isSameColumn: boolean
 }
+
+const defaultColumnColor = '#dff2e9'
+const sortByOrder = (left: TaskDto, right: TaskDto): number => left.order - right.order
 
 const KanbanCardContent = ({ task }: { task: TaskDto }) => (
   <>
@@ -58,13 +65,23 @@ const KanbanCardContent = ({ task }: { task: TaskDto }) => (
   </>
 )
 
+const KanbanDropPlaceholder = ({ task }: { task: TaskDto }) => (
+  <div className="kanban-card kanban-card-placeholder" aria-hidden="true">
+    <KanbanCardContent task={task} />
+  </div>
+)
+
 const SortableKanbanCard = ({ task, onTaskEdit }: { task: TaskDto; onTaskEdit: (task: TaskDto) => void }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: task.id
+    id: task.id,
+    transition: {
+      duration: 240,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+    }
   })
-  const style = {
+  const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition: isDragging ? 'opacity 160ms ease' : (transition ?? 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)')
+    transition: isDragging ? 'opacity 160ms ease, transform 160ms ease' : (transition ?? 'transform 240ms cubic-bezier(0.22, 1, 0.36, 1)')
   }
 
   return (
@@ -73,13 +90,21 @@ const SortableKanbanCard = ({ task, onTaskEdit }: { task: TaskDto; onTaskEdit: (
         <KanbanCardContent task={task} />
       </button>
       <button className="drag-handle kanban-drag-handle" type="button" aria-label="Перетащить задачу" {...attributes} {...listeners}>
-        ::
+        <GripIcon />
       </button>
     </article>
   )
 }
 
-const KanbanColumn = ({ column, tasks, onTaskEdit, onColumnUpdate, onColumnDelete }: KanbanColumnProps) => {
+const KanbanColumn = ({
+  column,
+  tasks,
+  placeholderIndex,
+  placeholderTask,
+  onTaskEdit,
+  onColumnUpdate,
+  onColumnDelete
+}: KanbanColumnProps) => {
   const { setNodeRef, isOver } = useDroppable({ id: column.id })
   const [title, setTitle] = useState(column.title)
   const [draftColor, setDraftColor] = useState(column.color)
@@ -110,7 +135,9 @@ const KanbanColumn = ({ column, tasks, onTaskEdit, onColumnUpdate, onColumnDelet
     onColumnUpdate(column.id, cleanTitle, draftColor)
   }
 
+  const renderPlaceholder = () => (placeholderTask ? <KanbanDropPlaceholder task={placeholderTask} /> : null)
   const hasPendingColor = draftColor.toLowerCase() !== column.color.toLowerCase()
+  const safePlaceholderIndex = placeholderTask && placeholderIndex !== null ? Math.min(Math.max(placeholderIndex, 0), tasks.length) : null
 
   return (
     <section
@@ -155,10 +182,14 @@ const KanbanColumn = ({ column, tasks, onTaskEdit, onColumnUpdate, onColumnDelet
 
       <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
         <div className="kanban-card-list">
-          {tasks.map((task) => (
-            <SortableKanbanCard key={task.id} task={task} onTaskEdit={onTaskEdit} />
+          {tasks.map((task, index) => (
+            <Fragment key={task.id}>
+              {safePlaceholderIndex === index && renderPlaceholder()}
+              <SortableKanbanCard task={task} onTaskEdit={onTaskEdit} />
+            </Fragment>
           ))}
-          {tasks.length === 0 && <div className="column-empty">Пусто</div>}
+          {safePlaceholderIndex === tasks.length && renderPlaceholder()}
+          {tasks.length === 0 && safePlaceholderIndex === null && <div className="column-empty">Пусто</div>}
         </div>
       </SortableContext>
     </section>
@@ -174,110 +205,145 @@ export const KanbanBoard = ({
   onColumnUpdate,
   onColumnDelete
 }: KanbanBoardProps) => {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 7 } }))
   const [newColumnTitle, setNewColumnTitle] = useState('')
   const [newColumnColor, setNewColumnColor] = useState(defaultColumnColor)
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
-  const [dragPreview, setDragPreview] = useState<DragPreview>(null)
+  const [dragState, setDragState] = useState<DragState>(null)
   const activeTask = tasks.find((task) => task.id === activeTaskId) ?? null
+  const columnIdSet = useMemo(() => new Set(columns.map((column) => column.id)), [columns])
+  const canCreateColumn = newColumnTitle.trim().length > 0
 
-  const buildPreviewTasks = (activeId: string, overId: string | null): TaskDto[] => {
-    const draggedTask = tasks.find((task) => task.id === activeId)
+  const clearDragState = (): void => {
+    setActiveTaskId(null)
+    setDragState(null)
+  }
 
-    if (!draggedTask || !overId || activeId === overId) {
-      return tasks
+  const sortedColumnTasks = (columnId: string): TaskDto[] => tasks.filter((task) => task.columnId === columnId).sort(sortByOrder)
+
+  const getDragPlacement = (activeId: string, overId: string | null): DragPlacement | null => {
+    if (!overId || activeId === overId) {
+      return null
     }
 
+    const draggedTask = tasks.find((task) => task.id === activeId)
     const overTask = tasks.find((task) => task.id === overId)
     const overColumn = columns.find((column) => column.id === overId)
     const targetColumnId = overTask?.columnId ?? overColumn?.id
 
-    if (!targetColumnId) {
-      return tasks
+    if (!draggedTask || !targetColumnId || !columnIdSet.has(targetColumnId)) {
+      return null
     }
 
-    const columnIds = new Set(columns.map((column) => column.id))
-    const tasksWithoutDragged = tasks.filter((task) => task.id !== activeId)
-    const previewTasks: TaskDto[] = []
+    const targetTasks = tasks.filter((task) => task.columnId === targetColumnId && task.id !== activeId).sort(sortByOrder)
+    const overTaskIndex = overTask ? targetTasks.findIndex((task) => task.id === overTask.id) : targetTasks.length
+    const targetIndex = overTaskIndex >= 0 ? overTaskIndex : targetTasks.length
 
-    for (const column of columns) {
-      const columnTasks = tasksWithoutDragged.filter((task) => task.columnId === column.id).sort((a, b) => a.order - b.order)
+    return {
+      activeTask: draggedTask,
+      sourceColumnId: draggedTask.columnId,
+      targetColumnId,
+      targetIndex,
+      isSameColumn: draggedTask.columnId === targetColumnId
+    }
+  }
 
-      if (column.id === targetColumnId) {
-        const insertIndex = overTask
-          ? Math.max(0, columnTasks.findIndex((task) => task.id === overTask.id))
-          : columnTasks.length
+  const buildReorderItems = (activeId: string, overId: string | null): TaskReorderItem[] => {
+    const placement = getDragPlacement(activeId, overId)
 
-        columnTasks.splice(insertIndex, 0, { ...draggedTask, columnId: targetColumnId })
-      }
-
-      previewTasks.push(...columnTasks.map((task, index) => ({ ...task, order: index })))
+    if (!placement) {
+      return []
     }
 
-    previewTasks.push(...tasksWithoutDragged.filter((task) => !columnIds.has(task.columnId)).sort((a, b) => a.order - b.order))
+    const sourceTasks = tasks.filter((task) => task.columnId === placement.sourceColumnId && task.id !== activeId).sort(sortByOrder)
+    const targetTasks = placement.isSameColumn
+      ? [...sourceTasks]
+      : tasks.filter((task) => task.columnId === placement.targetColumnId && task.id !== activeId).sort(sortByOrder)
+    const insertIndex = Math.min(Math.max(placement.targetIndex, 0), targetTasks.length)
 
-    return previewTasks
-  }
-
-  const handleDragStart = (event: DragStartEvent): void => {
-    const activeId = String(event.active.id)
-    setActiveTaskId(activeId)
-    setDragPreview({ activeId, overId: activeId })
-  }
-
-  const handleDragOver = (event: DragOverEvent): void => {
-    setDragPreview({
-      activeId: String(event.active.id),
-      overId: event.over ? String(event.over.id) : null
+    targetTasks.splice(insertIndex, 0, {
+      ...placement.activeTask,
+      columnId: placement.targetColumnId
     })
-  }
 
-  const handleDragEnd = (event: DragEndEvent): void => {
-    const { active, over } = event
-    const activeId = String(active.id)
-    const overId = over ? String(over.id) : null
-    setActiveTaskId(null)
-    setDragPreview(null)
+    const updates: TaskReorderItem[] = placement.isSameColumn
+      ? []
+      : sourceTasks.map((task, index) => ({
+          id: task.id,
+          columnId: placement.sourceColumnId,
+          order: index
+        }))
 
-    if (!overId) {
-      return
-    }
-
-    const draggedTask = tasks.find((task) => task.id === activeId)
-    if (!draggedTask) {
-      return
-    }
-
-    const nextTasks = buildPreviewTasks(activeId, overId)
-    const movedTask = nextTasks.find((task) => task.id === activeId)
-
-    if (!movedTask) {
-      return
-    }
-
-    const affectedColumnIds = new Set([draggedTask.columnId, movedTask.columnId])
-    const updates: TaskReorderItem[] = Array.from(affectedColumnIds).flatMap((columnId) =>
-      nextTasks
-        .filter((task) => task.columnId === columnId)
-        .sort((a, b) => a.order - b.order)
-        .map((task, index) => ({
+    updates.push(
+      ...targetTasks.map((task, index) => ({
         id: task.id,
-        columnId,
+        columnId: placement.targetColumnId,
         order: index
       }))
     )
 
-    const hasChanges = updates.some((update) => {
+    return updates
+  }
+
+  const hasChanges = (updates: TaskReorderItem[]): boolean =>
+    updates.some((update) => {
       const currentTask = tasks.find((task) => task.id === update.id)
       return currentTask?.columnId !== update.columnId || currentTask.order !== update.order
     })
 
-    if (hasChanges) {
-      onReorder(updates)
+  const updateDragTarget = (activeId: string, overId: string | null): void => {
+    const hasActiveTask = tasks.some((task) => task.id === activeId)
+    const hasValidTarget = !overId || tasks.some((task) => task.id === overId) || columns.some((column) => column.id === overId)
+
+    if (!hasActiveTask || !hasValidTarget) {
+      setDragState({ activeId, overId: null })
+      return
+    }
+
+    setDragState((current) => (current?.activeId === activeId && current.overId === overId ? current : { activeId, overId }))
+  }
+
+  const handleDragStart = (event: DragStartEvent): void => {
+    try {
+      const activeId = String(event.active.id)
+
+      if (!tasks.some((task) => task.id === activeId)) {
+        clearDragState()
+        return
+      }
+
+      setActiveTaskId(activeId)
+      setDragState({ activeId, overId: null })
+    } catch (error) {
+      console.error('Kanban drag start failed', error)
+      clearDragState()
     }
   }
 
-  const displayedTasks = dragPreview ? buildPreviewTasks(dragPreview.activeId, dragPreview.overId) : tasks
+  const handleDragOver = (event: DragOverEvent): void => {
+    try {
+      updateDragTarget(String(event.active.id), event.over ? String(event.over.id) : null)
+    } catch (error) {
+      console.error('Kanban drag over failed', error)
+      clearDragState()
+    }
+  }
+
+  const handleDragEnd = (event: DragEndEvent): void => {
+    try {
+      const updates = buildReorderItems(String(event.active.id), event.over ? String(event.over.id) : null)
+
+      if (updates.length > 0 && hasChanges(updates)) {
+        onReorder(updates)
+      }
+    } catch (error) {
+      console.error('Kanban drag end failed', error)
+    } finally {
+      clearDragState()
+    }
+  }
+
+  const dragPlacement = dragState ? getDragPlacement(dragState.activeId, dragState.overId) : null
 
   return (
     <section className="content-section">
@@ -287,7 +353,7 @@ export const KanbanBoard = ({
           onSubmit={(event) => {
             event.preventDefault()
             const title = newColumnTitle.trim()
-            if (!title) {
+            if (!title || !canCreateColumn) {
               return
             }
             onColumnCreate(title, newColumnColor)
@@ -303,7 +369,7 @@ export const KanbanBoard = ({
             value={newColumnColor}
             onChange={(event) => setNewColumnColor(event.target.value)}
           />
-          <button className="button button-secondary" type="submit">
+          <button className="button button-secondary" type="submit" disabled={!canCreateColumn}>
             Добавить колонку
           </button>
         </form>
@@ -315,25 +381,29 @@ export const KanbanBoard = ({
         measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
-        onDragCancel={() => {
-          setActiveTaskId(null)
-          setDragPreview(null)
-        }}
+        onDragCancel={clearDragState}
         onDragEnd={handleDragEnd}
       >
         <div className="kanban-grid">
-          {columns.map((column) => (
-            <KanbanColumn
-              key={column.id}
-              column={column}
-              tasks={displayedTasks.filter((task) => task.columnId === column.id).sort((a, b) => a.order - b.order)}
-              onTaskEdit={onTaskEdit}
-              onColumnUpdate={onColumnUpdate}
-              onColumnDelete={onColumnDelete}
-            />
-          ))}
+          {columns.map((column) => {
+            const isPlaceholderColumn =
+              Boolean(activeTask) && Boolean(dragPlacement) && dragPlacement?.targetColumnId === column.id && !dragPlacement.isSameColumn
+
+            return (
+              <KanbanColumn
+                key={column.id}
+                column={column}
+                tasks={sortedColumnTasks(column.id)}
+                placeholderIndex={isPlaceholderColumn ? (dragPlacement?.targetIndex ?? null) : null}
+                placeholderTask={isPlaceholderColumn ? activeTask : null}
+                onTaskEdit={onTaskEdit}
+                onColumnUpdate={onColumnUpdate}
+                onColumnDelete={onColumnDelete}
+              />
+            )
+          })}
         </div>
-        <DragOverlay dropAnimation={kanbanDropAnimation}>
+        <DragOverlay dropAnimation={null}>
           {activeTask && (
             <article className="kanban-card kanban-card-overlay">
               <button className="kanban-card-title" type="button">

@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { APP_NAME, APP_VIEWS, type AppViewId } from '@shared/app.constants'
+import type { AppSettings, DataActionResult, SettingsInfo, TaskDefaultSort } from '@shared/settings.types'
+import { DEFAULT_SETTINGS } from '@shared/settings.types'
 import type { KanbanColumnDto, TaskAppState, TaskDto, TaskInput, TaskReorderItem } from '@shared/task.types'
 import { CalendarView } from './components/CalendarView'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { CheckLogoIcon, PlusIcon } from './components/Icons'
+import { CheckLogoIcon, PlusIcon, SettingsIcon } from './components/Icons'
 import { KanbanBoard } from './components/KanbanBoard'
+import { SettingsView } from './components/SettingsView'
 import { TaskFormModal } from './components/TaskFormModal'
 import { TaskTable } from './components/TaskTable'
 
@@ -21,7 +24,8 @@ type ConfirmState =
     }
   | null
 
-type SortMode = 'manual' | 'due-asc' | 'due-desc'
+type ActiveViewId = AppViewId | 'settings'
+type SortMode = TaskDefaultSort
 
 const emptyState: TaskAppState = {
   tasks: [],
@@ -35,8 +39,8 @@ const TaskerLogo = () => (
   </span>
 )
 
-const compareTasks = (sortMode: SortMode) => (left: TaskDto, right: TaskDto): number => {
-  if (left.pinned !== right.pinned) {
+const compareTasks = (sortMode: SortMode, pinnedFirst: boolean) => (left: TaskDto, right: TaskDto): number => {
+  if (pinnedFirst && left.pinned !== right.pinned) {
     return left.pinned ? -1 : 1
   }
 
@@ -53,8 +57,10 @@ const compareTasks = (sortMode: SortMode) => (left: TaskDto, right: TaskDto): nu
 }
 
 export const App = () => {
-  const [activeView, setActiveView] = useState<AppViewId>('tasks')
+  const [activeView, setActiveView] = useState<ActiveViewId>('tasks')
   const [appState, setAppState] = useState<TaskAppState>(emptyState)
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  const [settingsInfo, setSettingsInfo] = useState<SettingsInfo | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editingTask, setEditingTask] = useState<TaskDto | null>(null)
@@ -62,17 +68,29 @@ export const App = () => {
   const [confirmState, setConfirmState] = useState<ConfirmState>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [tagFilter, setTagFilter] = useState('all')
-  const [sortMode, setSortMode] = useState<SortMode>('manual')
+  const [sortMode, setSortMode] = useState<SortMode>(DEFAULT_SETTINGS.tasks.defaultSort)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = Number(window.localStorage.getItem('tasker-sidebar-width'))
     return Number.isFinite(saved) && saved > 0 ? saved : 260
   })
 
+  const refreshSettingsInfo = async (): Promise<void> => {
+    setSettingsInfo(await window.tasker.settings.getInfo())
+  }
+
   const loadState = async (): Promise<void> => {
     setIsLoading(true)
     setError(null)
     try {
-      setAppState(await window.tasker.tasks.getState())
+      const [nextState, nextSettings, nextInfo] = await Promise.all([
+        window.tasker.tasks.getState(),
+        window.tasker.settings.get(),
+        window.tasker.settings.getInfo()
+      ])
+      setAppState(nextState)
+      setSettings(nextSettings)
+      setSettingsInfo(nextInfo)
+      setSortMode(nextSettings.tasks.defaultSort)
     } catch (unknownError) {
       setError(unknownError instanceof Error ? unknownError.message : 'Не удалось загрузить данные')
     } finally {
@@ -88,14 +106,46 @@ export const App = () => {
     window.localStorage.setItem('tasker-sidebar-width', String(sidebarWidth))
   }, [sidebarWidth])
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const root = document.documentElement
+
+    const applyTheme = (): void => {
+      const resolvedTheme = settings.appearance.theme === 'system'
+        ? mediaQuery.matches ? 'dark' : 'light'
+        : settings.appearance.theme
+
+      root.dataset.theme = resolvedTheme
+      root.dataset.themePreference = settings.appearance.theme
+      root.dataset.density = settings.appearance.density
+      root.dataset.reducedMotion = String(settings.appearance.reducedMotion)
+      root.dataset.tableDensity = settings.tasks.tableDensity
+      root.dataset.highlightOverdue = String(settings.tasks.highlightOverdue)
+      root.dataset.kanbanCardDensity = settings.kanban.cardDensity
+      root.dataset.kanbanReducedDrag = String(settings.kanban.reduceDragAnimations)
+      root.dataset.kanbanAccentStyle = settings.kanban.columnAccentStyle
+      root.style.colorScheme = resolvedTheme
+    }
+
+    applyTheme()
+    mediaQuery.addEventListener('change', applyTheme)
+    return () => mediaQuery.removeEventListener('change', applyTheme)
+  }, [settings])
+
   const visibleTasks = useMemo(() => {
     const cleanSearch = searchQuery.trim().toLowerCase()
 
     return appState.tasks
       .filter((task) => (cleanSearch ? task.title.toLowerCase().includes(cleanSearch) : true))
       .filter((task) => (tagFilter === 'all' ? true : task.tags.some((tag) => tag.name === tagFilter)))
-      .sort(compareTasks(sortMode))
-  }, [appState.tasks, searchQuery, sortMode, tagFilter])
+      .sort(compareTasks(sortMode, settings.tasks.pinnedFirst))
+  }, [appState.tasks, searchQuery, settings.tasks.pinnedFirst, sortMode, tagFilter])
+
+  const pageTitle = activeView === 'settings'
+    ? 'Настройки'
+    : activeView === 'tasks'
+      ? 'Задачи'
+      : APP_VIEWS.find((view) => view.id === activeView)?.label
 
   const openCreateTask = (): void => {
     setEditingTask(null)
@@ -115,6 +165,20 @@ export const App = () => {
     setAppState(nextState)
     setIsTaskModalOpen(false)
     setEditingTask(null)
+  }
+
+  const updateSettings = async (partialSettings: Partial<AppSettings>): Promise<void> => {
+    setError(null)
+    try {
+      const nextSettings = await window.tasker.settings.update(partialSettings)
+      setSettings(nextSettings)
+      if (partialSettings.tasks && 'defaultSort' in partialSettings.tasks) {
+        setSortMode(nextSettings.tasks.defaultSort)
+      }
+      setSettingsInfo(await window.tasker.settings.getInfo())
+    } catch (unknownError) {
+      setError(unknownError instanceof Error ? unknownError.message : 'Не удалось сохранить настройки')
+    }
   }
 
   const runAction = async (action: () => Promise<TaskAppState>): Promise<void> => {
@@ -204,6 +268,23 @@ export const App = () => {
     setConfirmState(null)
   }
 
+  const exportData = async (): Promise<DataActionResult> => window.tasker.data.export()
+
+  const importData = async (): Promise<DataActionResult> => {
+    const imported = await window.tasker.data.import()
+    if (imported.state) {
+      setAppState(imported.state)
+    }
+    if (imported.settings) {
+      setSettings(imported.settings)
+      setSortMode(imported.settings.tasks.defaultSort)
+    }
+    return imported.result
+  }
+
+  const backupData = async (): Promise<DataActionResult> => window.tasker.data.backup()
+  const openDataFolder = async (): Promise<DataActionResult> => window.tasker.data.openFolder()
+
   return (
     <div className="app-shell" style={{ gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)` }}>
       <aside className="sidebar" aria-label="Основная навигация">
@@ -225,13 +306,24 @@ export const App = () => {
           ))}
         </nav>
 
+        <div className="sidebar-footer">
+          <button
+            className={activeView === 'settings' ? 'nav-item nav-item-active sidebar-settings-button' : 'nav-item sidebar-settings-button'}
+            type="button"
+            onClick={() => setActiveView('settings')}
+          >
+            <SettingsIcon />
+            <span>Настройки</span>
+          </button>
+        </div>
+
         <button className="sidebar-resizer" type="button" aria-label="Изменить ширину меню" onMouseDown={handleSidebarResizeStart} />
       </aside>
 
       <main className="main-content">
         <header className="page-header">
           <div>
-            <h1>{activeView === 'tasks' ? 'Задачи' : APP_VIEWS.find((view) => view.id === activeView)?.label}</h1>
+            <h1>{pageTitle}</h1>
           </div>
           {activeView === 'tasks' && (
             <button className="create-task-button" type="button" aria-label="Создать задачу" onClick={openCreateTask}>
@@ -275,6 +367,7 @@ export const App = () => {
 
             <TaskTable
               tasks={visibleTasks}
+              highlightOverdue={settings.tasks.highlightOverdue}
               onEdit={openEditTask}
               onDelete={(task) => setConfirmState({ type: 'task', task })}
               onPinnedChange={(task, pinned) => runAction(() => window.tasker.tasks.setPinned(task.id, pinned)).catch(console.error)}
@@ -295,6 +388,7 @@ export const App = () => {
             <KanbanBoard
               columns={appState.columns}
               tasks={appState.tasks}
+              settings={settings.kanban}
               onTaskEdit={openEditTask}
               onReorder={handleTaskReorder}
               onColumnCreate={(title, color) => runAction(() => window.tasker.columns.create(title, color)).catch(console.error)}
@@ -307,8 +401,22 @@ export const App = () => {
         {!isLoading && activeView === 'calendar' && (
           <CalendarView
             tasks={appState.tasks}
+            settings={settings.calendar}
             onTaskEdit={openEditTask}
             onTaskMove={handleTaskDueDateMove}
+          />
+        )}
+
+        {!isLoading && activeView === 'settings' && (
+          <SettingsView
+            settings={settings}
+            info={settingsInfo}
+            onSettingsChange={updateSettings}
+            onExportData={exportData}
+            onImportData={importData}
+            onBackupData={backupData}
+            onOpenDataFolder={openDataFolder}
+            onRefreshInfo={refreshSettingsInfo}
           />
         )}
       </main>

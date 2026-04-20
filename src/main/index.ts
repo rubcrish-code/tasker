@@ -2,9 +2,11 @@ import { app, BrowserWindow, Menu, Notification, Tray } from 'electron'
 import { join } from 'node:path'
 import { APP_NAME } from '@shared/app.constants'
 import { createAppIcon } from './app/icon'
-import { disconnectPrisma } from './database/prisma'
+import { disconnectPrisma, ensureDatabase } from './database/prisma'
+import { registerSettingsHandlers } from './ipc/settings.handlers'
 import { registerTaskHandlers } from './ipc/task.handlers'
 import { startNotificationScheduler, stopNotificationScheduler } from './services/notification.service'
+import { getSettingsSync } from './services/settings.service'
 import { ensureDefaultColumns } from './services/task.service'
 
 app.setName(APP_NAME)
@@ -120,6 +122,11 @@ const createMainWindow = (): void => {
       return
     }
 
+    if (getSettingsSync().notifications.closeBehavior === 'quit') {
+      isQuitting = true
+      return
+    }
+
     event.preventDefault()
     mainWindow?.hide()
     showBackgroundHint()
@@ -130,9 +137,11 @@ const createMainWindow = (): void => {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerTaskHandlers()
-  ensureDefaultColumns().catch(console.error)
+  registerSettingsHandlers()
+  await ensureDatabase()
+  await ensureDefaultColumns()
   createTray()
   startNotificationScheduler()
   createMainWindow()

@@ -41,6 +41,13 @@ export const GripIcon = ({ className }: IconProps) => (
   </svg>
 )
 
+export const SettingsIcon = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 8.35a3.65 3.65 0 1 0 0 7.3 3.65 3.65 0 0 0 0-7.3Z" />
+    <path d="M18.28 13.32c.05-.43.05-.87 0-1.32l1.65-1.28-1.6-2.77-1.96.78a7.2 7.2 0 0 0-1.15-.67L14.92 6h-3.84l-.3 2.06c-.4.18-.78.4-1.15.67l-1.96-.78-1.6 2.77L7.72 12c-.05.45-.05.89 0 1.32L6.07 14.6l1.6 2.77 1.96-.78c.37.27.75.49 1.15.67l.3 2.06h3.84l.3-2.06c.4-.18.78-.4 1.15-.67l1.96.78 1.6-2.77-1.65-1.28Z" />
+  </svg>
+)
+
 export const CheckLogoIcon = ({ className }: IconProps) => (
   <svg className={className} viewBox="0 0 32 32" aria-hidden="true">
     <rect width="32" height="32" rx="8" />

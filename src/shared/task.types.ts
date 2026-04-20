@@ -1,3 +1,5 @@
+import type { AppSettings, DataActionResult, SettingsInfo } from './settings.types'
+
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH'
 
 export type ChecklistItemDto = {
@@ -111,5 +113,16 @@ export type TaskerApi = {
     create: (title: string, color: string) => Promise<TaskAppState>
     update: (id: string, title: string, color: string) => Promise<TaskAppState>
     delete: (id: string) => Promise<TaskAppState>
+  }
+  settings: {
+    get: () => Promise<AppSettings>
+    update: (settings: Partial<AppSettings>) => Promise<AppSettings>
+    getInfo: () => Promise<SettingsInfo>
+  }
+  data: {
+    export: () => Promise<DataActionResult>
+    import: () => Promise<{ result: DataActionResult; state: TaskAppState | null; settings: AppSettings | null }>
+    backup: () => Promise<DataActionResult>
+    openFolder: () => Promise<DataActionResult>
   }
 }

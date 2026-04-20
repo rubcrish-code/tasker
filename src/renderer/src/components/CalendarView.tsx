@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -10,11 +10,13 @@ import {
   useSensor,
   useSensors
 } from '@dnd-kit/core'
+import type { AppSettings } from '@shared/settings.types'
 import type { TaskDto } from '@shared/task.types'
 import { formatDateTime, mergeDayWithTaskTime, taskDueDayKey, toDayKey } from '../utils/date'
 
 type CalendarViewProps = {
   tasks: TaskDto[]
+  settings: AppSettings['calendar']
   onTaskEdit: (task: TaskDto) => void
   onTaskMove: (task: TaskDto, dueDate: string) => void
 }
@@ -27,7 +29,10 @@ type CalendarDay = {
   inCurrentMonth: boolean
 }
 
-const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+const weekDayLabels = {
+  monday: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
+  sunday: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
+}
 const monthDropPrefix = 'month:'
 const weekDropPrefix = 'week:'
 
@@ -39,16 +44,24 @@ const addDays = (date: Date, days: number): Date => {
   return nextDate
 }
 
-const startOfWeek = (date: Date): Date => {
-  const startOffset = (date.getDay() + 6) % 7
-  return addDays(date, -startOffset)
+const dateFromDayKey = (dayKey: string): Date => {
+  const [year, month, day] = dayKey.split('-').map(Number)
+  return new Date(year, month - 1, day)
 }
 
-const buildMonthDays = (monthDate: Date): CalendarDay[] => {
+const getWeekOffset = (date: Date, firstDayOfWeek: AppSettings['calendar']['firstDayOfWeek']): number => {
+  return firstDayOfWeek === 'monday' ? (date.getDay() + 6) % 7 : date.getDay()
+}
+
+const startOfWeek = (date: Date, firstDayOfWeek: AppSettings['calendar']['firstDayOfWeek']): Date => {
+  return addDays(date, -getWeekOffset(date, firstDayOfWeek))
+}
+
+const buildMonthDays = (monthDate: Date, firstDayOfWeek: AppSettings['calendar']['firstDayOfWeek']): CalendarDay[] => {
   const year = monthDate.getFullYear()
   const month = monthDate.getMonth()
   const firstDay = new Date(year, month, 1)
-  const startOffset = (firstDay.getDay() + 6) % 7
+  const startOffset = getWeekOffset(firstDay, firstDayOfWeek)
   const startDate = new Date(year, month, 1 - startOffset)
 
   return Array.from({ length: 42 }, (_item, index) => {
@@ -63,8 +76,8 @@ const buildMonthDays = (monthDate: Date): CalendarDay[] => {
   })
 }
 
-const buildWeekDays = (weekDate: Date): CalendarDay[] => {
-  const startDate = startOfWeek(weekDate)
+const buildWeekDays = (weekDate: Date, firstDayOfWeek: AppSettings['calendar']['firstDayOfWeek']): CalendarDay[] => {
+  const startDate = startOfWeek(weekDate, firstDayOfWeek)
 
   return Array.from({ length: 7 }, (_item, index) => {
     const date = addDays(startDate, index)
@@ -94,8 +107,8 @@ const formatMonthTitle = (date: Date): string =>
     year: 'numeric'
   }).format(date)
 
-const formatWeekTitle = (date: Date): string => {
-  const firstDay = startOfWeek(date)
+const formatWeekTitle = (date: Date, firstDayOfWeek: AppSettings['calendar']['firstDayOfWeek']): string => {
+  const firstDay = startOfWeek(date, firstDayOfWeek)
   const lastDay = addDays(firstDay, 6)
   const sameMonth = firstDay.getMonth() === lastDay.getMonth()
   const firstFormat = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: sameMonth ? undefined : 'short' })
@@ -105,13 +118,13 @@ const formatWeekTitle = (date: Date): string => {
 }
 
 const makeMonthDropId = (dayKey: string): string => `${monthDropPrefix}${dayKey}`
-const makeWeekDropId = (dayKey: string, hour: number): string => `${weekDropPrefix}${dayKey}:${hour}`
+const makeWeekDropId = (dayKey: string, minuteOfDay: number): string => `${weekDropPrefix}${dayKey}:${minuteOfDay}`
 
-const parseDropTarget = (id: string): { dayKey: string; hour: number | null } | null => {
+const parseDropTarget = (id: string): { dayKey: string; minuteOfDay: number | null } | null => {
   if (id.startsWith(monthDropPrefix)) {
     return {
       dayKey: id.slice(monthDropPrefix.length),
-      hour: null
+      minuteOfDay: null
     }
   }
 
@@ -119,22 +132,35 @@ const parseDropTarget = (id: string): { dayKey: string; hour: number | null } | 
     return null
   }
 
-  const [dayKey, hourValue] = id.slice(weekDropPrefix.length).split(':')
-  const hour = Number(hourValue)
+  const [dayKey, minuteValue] = id.slice(weekDropPrefix.length).split(':')
+  const minuteOfDay = Number(minuteValue)
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || !Number.isInteger(minuteOfDay) || minuteOfDay < 0 || minuteOfDay > 1439) {
     return null
   }
 
-  return { dayKey, hour }
+  return { dayKey, minuteOfDay }
 }
 
-const mergeWeekSlotWithTaskTime = (dayKey: string, hour: number, isoDate: string | null): string => {
+const mergeWeekSlotWithTaskTime = (dayKey: string, minuteOfDay: number): string => {
   const [year, month, day] = dayKey.split('-').map(Number)
-  const base = isoDate ? new Date(isoDate) : new Date()
-  const nextDate = new Date(year, month - 1, day, hour, base.getMinutes(), 0)
+  const hours = Math.floor(minuteOfDay / 60)
+  const minutes = minuteOfDay % 60
+  const nextDate = new Date(year, month - 1, day, hours, minutes, 0)
 
   return nextDate.toISOString()
+}
+
+const getSlotMinute = (isoDate: string, step: 30 | 60): number => {
+  const date = new Date(isoDate)
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  return Math.floor(minutes / step) * step
+}
+
+const formatSlotLabel = (minuteOfDay: number): string => {
+  const hours = Math.floor(minuteOfDay / 60)
+  const minutes = minuteOfDay % 60
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
 const CalendarTask = ({
@@ -219,16 +245,16 @@ const CalendarDayCell = ({
 
 const WeekSlot = ({
   day,
-  hour,
+  minuteOfDay,
   tasks,
   onTaskEdit
 }: {
   day: CalendarDay
-  hour: number
+  minuteOfDay: number
   tasks: TaskDto[]
   onTaskEdit: (task: TaskDto) => void
 }) => {
-  const { setNodeRef, isOver } = useDroppable({ id: makeWeekDropId(day.key, hour) })
+  const { setNodeRef, isOver } = useDroppable({ id: makeWeekDropId(day.key, minuteOfDay) })
 
   return (
     <div ref={setNodeRef} className={isOver ? 'week-slot week-slot-over' : 'week-slot'}>
@@ -239,14 +265,20 @@ const WeekSlot = ({
   )
 }
 
-export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProps) => {
-  const [mode, setMode] = useState<CalendarMode>('month')
+export const CalendarView = ({ tasks, settings, onTaskEdit, onTaskMove }: CalendarViewProps) => {
+  const [mode, setMode] = useState<CalendarMode>(settings.defaultMode)
   const [viewDate, setViewDate] = useState(() => new Date())
   const [selectedDay, setSelectedDay] = useState(() => toDayKey(new Date()))
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-  const monthDays = useMemo(() => buildMonthDays(viewDate), [viewDate])
-  const weekDaysData = useMemo(() => buildWeekDays(viewDate), [viewDate])
+  const labels = weekDayLabels[settings.firstDayOfWeek]
+  const monthDays = useMemo(() => buildMonthDays(viewDate, settings.firstDayOfWeek), [settings.firstDayOfWeek, viewDate])
+  const weekDaysData = useMemo(() => buildWeekDays(viewDate, settings.firstDayOfWeek), [settings.firstDayOfWeek, viewDate])
+
+  useEffect(() => {
+    setMode(settings.defaultMode)
+  }, [settings.defaultMode])
+
   const tasksByDay = useMemo(() => {
     return tasks.reduce<Record<string, TaskDto[]>>((acc, task) => {
       const key = taskDueDayKey(task.dueDate)
@@ -262,6 +294,7 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
       return acc
     }, {})
   }, [tasks])
+
   const selectedTasks = tasksByDay[selectedDay] ?? []
   const activeTask = tasks.find((task) => task.id === activeTaskId) ?? null
   const weekDayKeys = new Set(weekDaysData.map((day) => day.key))
@@ -269,13 +302,20 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
     const dayKey = taskDueDayKey(task.dueDate)
     return dayKey ? weekDayKeys.has(dayKey) : false
   })
-  const weekHours = useMemo(() => {
-    const taskHours = weekTasks.map((task) => (task.dueDate ? new Date(task.dueDate).getHours() : 9))
-    const minHour = Math.min(8, ...taskHours)
-    const maxHour = Math.max(20, ...taskHours)
+  const weekSlots = useMemo(() => {
+    const step = settings.timeGridStepMinutes
+    const configuredStart = Math.min(23, Math.max(0, settings.workdayStartHour)) * 60
+    const configuredEnd = Math.min(24, Math.max(1, settings.workdayEndHour)) * 60
+    const startMinute = Math.min(configuredStart, configuredEnd - step)
+    const endMinute = Math.max(startMinute + step, configuredEnd)
+    const taskMinutes = weekTasks
+      .filter((task) => task.dueDate)
+      .map((task) => getSlotMinute(task.dueDate as string, step))
+    const minMinute = Math.min(startMinute, ...taskMinutes)
+    const maxMinute = Math.max(endMinute - step, ...taskMinutes)
 
-    return Array.from({ length: maxHour - minHour + 1 }, (_item, index) => minHour + index)
-  }, [weekTasks])
+    return Array.from({ length: Math.floor((maxMinute - minMinute) / step) + 1 }, (_item, index) => minMinute + index * step)
+  }, [settings.timeGridStepMinutes, settings.workdayEndHour, settings.workdayStartHour, weekTasks])
 
   const changePeriod = (delta: number): void => {
     setViewDate((current) => {
@@ -291,12 +331,12 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
 
   const selectDay = (dayKey: string): void => {
     setSelectedDay(dayKey)
-    setViewDate(new Date(dayKey))
+    setViewDate(dateFromDayKey(dayKey))
   }
 
   const handleModeChange = (nextMode: CalendarMode): void => {
     setMode(nextMode)
-    setViewDate(new Date(selectedDay))
+    setViewDate(dateFromDayKey(selectedDay))
   }
 
   const handleDragStart = (event: DragStartEvent): void => {
@@ -319,9 +359,9 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
       return
     }
 
-    const dueDate = target.hour === null
+    const dueDate = target.minuteOfDay === null
       ? mergeDayWithTaskTime(target.dayKey, task.dueDate)
-      : mergeWeekSlotWithTaskTime(target.dayKey, target.hour, task.dueDate)
+      : mergeWeekSlotWithTaskTime(target.dayKey, target.minuteOfDay)
 
     onTaskMove(task, dueDate)
     selectDay(target.dayKey)
@@ -329,13 +369,13 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
   }
 
   return (
-    <section className="content-section">
+    <section className="content-section calendar-view">
       <div className="calendar-toolbar">
         <button className="button button-secondary" type="button" onClick={() => changePeriod(-1)}>
           Назад
         </button>
         <div className="calendar-toolbar-title">
-          <h2>{mode === 'month' ? formatMonthTitle(viewDate) : formatWeekTitle(viewDate)}</h2>
+          <h2>{mode === 'month' ? formatMonthTitle(viewDate) : formatWeekTitle(viewDate, settings.firstDayOfWeek)}</h2>
           <div className="calendar-mode-switch" aria-label="Режим календаря">
             <button className={mode === 'month' ? 'mode-button mode-button-active' : 'mode-button'} type="button" onClick={() => handleModeChange('month')}>
               Месяц
@@ -354,7 +394,7 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
         <div className={mode === 'month' ? 'calendar-layout' : 'calendar-layout calendar-layout-week'}>
           {mode === 'month' ? (
             <div className="calendar-grid">
-              {weekDays.map((day) => (
+              {labels.map((day) => (
                 <div className="calendar-weekday" key={day}>
                   {day}
                 </div>
@@ -380,16 +420,18 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
                   type="button"
                   onClick={() => selectDay(day.key)}
                 >
-                  <span>{weekDays[index]}</span>
+                  <span>{labels[index]}</span>
                   <strong>{new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'short' }).format(day.date)}</strong>
                 </button>
               ))}
-              {weekHours.map((hour) => (
-                <div className="week-row" key={hour}>
-                  <div className="week-time-label">{String(hour).padStart(2, '0')}:00</div>
+              {weekSlots.map((minuteOfDay) => (
+                <div className="week-row" key={minuteOfDay}>
+                  <div className="week-time-label">{formatSlotLabel(minuteOfDay)}</div>
                   {weekDaysData.map((day) => {
-                    const slotTasks = (tasksByDay[day.key] ?? []).filter((task) => task.dueDate && new Date(task.dueDate).getHours() === hour)
-                    return <WeekSlot key={`${day.key}-${hour}`} day={day} hour={hour} tasks={slotTasks} onTaskEdit={onTaskEdit} />
+                    const slotTasks = (tasksByDay[day.key] ?? []).filter(
+                      (task) => task.dueDate && getSlotMinute(task.dueDate, settings.timeGridStepMinutes) === minuteOfDay
+                    )
+                    return <WeekSlot key={`${day.key}-${minuteOfDay}`} day={day} minuteOfDay={minuteOfDay} tasks={slotTasks} onTaskEdit={onTaskEdit} />
                   })}
                 </div>
               ))}
@@ -398,7 +440,7 @@ export const CalendarView = ({ tasks, onTaskEdit, onTaskMove }: CalendarViewProp
 
           <aside className="day-panel">
             <h3>Задачи на дату</h3>
-            <p>{new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(selectedDay))}</p>
+            <p>{new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }).format(dateFromDayKey(selectedDay))}</p>
             <div className="day-task-list">
               {selectedTasks.length === 0 && <div className="empty-state compact">На эту дату задач нет.</div>}
               {selectedTasks.map((task) => (

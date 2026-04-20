@@ -490,3 +490,141 @@ export const markOverdueNotified = async (id: string): Promise<void> => {
     }
   })
 }
+
+const parseNullableDate = (value: string | null | undefined): Date | null => {
+  if (!value) {
+    return null
+  }
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+const parseDateOrNow = (value: string | null | undefined): Date => {
+  const date = parseNullableDate(value)
+  return date ?? new Date()
+}
+
+const normalizePriority = (priority: string): TaskPriority => {
+  return priority === 'LOW' || priority === 'HIGH' || priority === 'MEDIUM' ? priority : 'MEDIUM'
+}
+
+export const replaceAppState = async (state: TaskAppState): Promise<TaskAppState> => {
+  await prisma.$transaction([
+    prisma.taskTag.deleteMany(),
+    prisma.checklistItem.deleteMany(),
+    prisma.taskNote.deleteMany(),
+    prisma.task.deleteMany(),
+    prisma.tag.deleteMany(),
+    prisma.kanbanColumn.deleteMany()
+  ])
+
+  const columns = state.columns.length > 0
+    ? state.columns
+    : DEFAULT_COLUMNS.map((column, index) => ({
+        id: column.id,
+        title: column.title,
+        color: column.color,
+        order: index
+      }))
+
+  for (const [index, column] of columns.entries()) {
+    await prisma.kanbanColumn.create({
+      data: {
+        id: column.id,
+        title: normalizeTitle(column.title) || `Column ${index + 1}`,
+        color: normalizeColor(column.color, colorForName(column.title || `Column ${index + 1}`, columnPalette)),
+        order: Number.isFinite(column.order) ? column.order : index
+      }
+    })
+  }
+
+  for (const tag of state.tags) {
+    const cleanName = tag.name.trim()
+    if (!cleanName) {
+      continue
+    }
+
+    await prisma.tag.create({
+      data: {
+        id: tag.id,
+        name: cleanName,
+        color: normalizeColor(tag.color, colorForName(cleanName))
+      }
+    })
+  }
+
+  const validColumnIds = new Set(columns.map((column) => column.id))
+  const fallbackColumnId = columns[0]?.id ?? DEFAULT_COLUMNS[0].id
+
+  for (const [index, task] of state.tasks.entries()) {
+    const columnId = validColumnIds.has(task.columnId) ? task.columnId : fallbackColumnId
+
+    await prisma.task.create({
+      data: {
+        id: task.id,
+        title: normalizeTitle(task.title) || `Task ${index + 1}`,
+        description: task.description ?? '',
+        status: task.status || statusForColumn(columnId),
+        priority: normalizePriority(task.priority),
+        dueDate: parseNullableDate(task.dueDate),
+        assigner: task.assigner ?? '',
+        assignee: task.assignee ?? '',
+        reminderHours: Math.max(0, Math.trunc(Number(task.reminderHours) || 0)),
+        reminderMinutes: Math.max(0, Math.trunc(Number(task.reminderMinutes) || 0)),
+        activityAt: parseNullableDate(task.activityAt),
+        activityCount: Math.max(0, Math.trunc(Number(task.activityCount) || 0)),
+        pinned: Boolean(task.pinned),
+        isCompleted: Boolean(task.isCompleted),
+        order: Number.isFinite(task.order) ? task.order : index,
+        columnId,
+        createdAt: parseDateOrNow(task.createdAt)
+      }
+    })
+
+    if (task.checklistItems.length > 0) {
+      await prisma.checklistItem.createMany({
+        data: task.checklistItems
+          .filter((item) => item.title.trim().length > 0)
+          .map((item, checklistIndex) => ({
+            id: item.id,
+            taskId: task.id,
+            title: item.title.trim(),
+            completed: Boolean(item.completed),
+            order: Number.isFinite(item.order) ? item.order : checklistIndex
+          }))
+      })
+    }
+
+    if (task.notes.length > 0) {
+      await prisma.taskNote.createMany({
+        data: task.notes
+          .filter((note) => note.body.trim().length > 0)
+          .map((note) => ({
+            id: note.id,
+            taskId: task.id,
+            body: note.body.trim(),
+            createdAt: parseDateOrNow(note.createdAt)
+          }))
+      })
+    }
+
+    for (const tag of task.tags) {
+      const savedTag = await prisma.tag.findUnique({
+        where: { name: tag.name }
+      })
+
+      if (savedTag) {
+        await prisma.taskTag.create({
+          data: {
+            taskId: task.id,
+            tagId: savedTag.id
+          }
+        })
+      }
+    }
+  }
+
+  await ensureDefaultColumns()
+  return getAppState()
+}

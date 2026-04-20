@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
+import type { AppSettings } from '../shared/settings.types'
 import type { TaskInput, TaskReorderItem, TaskerApi } from '../shared/task.types'
 
 const taskerApi: TaskerApi = {
@@ -18,6 +19,17 @@ const taskerApi: TaskerApi = {
     create: (title: string, color: string) => ipcRenderer.invoke(IPC_CHANNELS.columnsCreate, title, color),
     update: (id: string, title: string, color: string) => ipcRenderer.invoke(IPC_CHANNELS.columnsUpdate, id, title, color),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.columnsDelete, id)
+  },
+  settings: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
+    update: (settings: Partial<AppSettings>) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, settings),
+    getInfo: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGetInfo)
+  },
+  data: {
+    export: () => ipcRenderer.invoke(IPC_CHANNELS.dataExport),
+    import: () => ipcRenderer.invoke(IPC_CHANNELS.dataImport),
+    backup: () => ipcRenderer.invoke(IPC_CHANNELS.dataBackup),
+    openFolder: () => ipcRenderer.invoke(IPC_CHANNELS.dataOpenFolder)
   }
 }
 

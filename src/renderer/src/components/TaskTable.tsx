@@ -8,6 +8,7 @@ import { GripIcon, PinIcon, TrashIcon } from './Icons'
 
 type TaskTableProps = {
   tasks: TaskDto[]
+  highlightOverdue: boolean
   onEdit: (task: TaskDto) => void
   onDelete: (task: TaskDto) => void
   onPinnedChange: (task: TaskDto, pinned: boolean) => void
@@ -32,7 +33,7 @@ const TagPill = ({ tag }: { tag: TagDto }) => (
   </span>
 )
 
-const SortableTaskRow = ({ task, onEdit, onDelete, onPinnedChange, onCompletedChange }: SortableTaskRowProps) => {
+const SortableTaskRow = ({ task, highlightOverdue, onEdit, onDelete, onPinnedChange, onCompletedChange }: SortableTaskRowProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id
   })
@@ -42,8 +43,14 @@ const SortableTaskRow = ({ task, onEdit, onDelete, onPinnedChange, onCompletedCh
     transition
   }
 
+  const rowClassName = [
+    'task-row',
+    isDragging ? 'task-row-dragging' : '',
+    highlightOverdue && state === 'overdue' ? 'task-row-overdue' : ''
+  ].join(' ')
+
   return (
-    <tr ref={setNodeRef} className={isDragging ? 'task-row task-row-dragging' : 'task-row'} style={style}>
+    <tr ref={setNodeRef} className={rowClassName} style={style}>
       <td className="task-check-cell">
         <input
           aria-label="Отметить задачу выполненной"
@@ -100,7 +107,7 @@ const SortableTaskRow = ({ task, onEdit, onDelete, onPinnedChange, onCompletedCh
   )
 }
 
-export const TaskTable = ({ tasks, onEdit, onDelete, onPinnedChange, onCompletedChange, onReorder }: TaskTableProps) => {
+export const TaskTable = ({ tasks, highlightOverdue, onEdit, onDelete, onPinnedChange, onCompletedChange, onReorder }: TaskTableProps) => {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   const handleDragEnd = (event: DragEndEvent): void => {
@@ -156,6 +163,7 @@ export const TaskTable = ({ tasks, onEdit, onDelete, onPinnedChange, onCompleted
                 <SortableTaskRow
                   key={task.id}
                   task={task}
+                  highlightOverdue={highlightOverdue}
                   onEdit={onEdit}
                   onDelete={onDelete}
                   onPinnedChange={onPinnedChange}

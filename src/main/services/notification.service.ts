@@ -1,6 +1,7 @@
 import { Notification } from 'electron'
 import { APP_NAME } from '@shared/app.constants'
 import { createAppIcon } from '../app/icon'
+import { getSettingsSync } from './settings.service'
 import { getTasksForNotifications, markDueSoonNotified, markOverdueNotified } from './task.service'
 
 let notificationTimer: NodeJS.Timeout | null = null
@@ -51,6 +52,11 @@ const showNotification = (title: string, body: string): void => {
 }
 
 const checkTaskNotifications = async (): Promise<void> => {
+  const settings = getSettingsSync()
+  if (!settings.notifications.enabled) {
+    return
+  }
+
   const now = Date.now()
   const tasks = await getTasksForNotifications()
 
@@ -64,12 +70,12 @@ const checkTaskNotifications = async (): Promise<void> => {
     const shouldNotifySoon = now >= dueTime - reminderMs && now < dueTime
     const isOverdue = now >= dueTime
 
-    if (shouldNotifySoon && !task.dueSoonNotifiedAt) {
+    if (settings.notifications.dueSoon && shouldNotifySoon && !task.dueSoonNotifiedAt) {
       showNotification(`${APP_NAME} — скоро срок задачи`, `Через ${formatLeadTime(dueTime, now)} наступит срок задачи «${task.title}».`)
       await markDueSoonNotified(task.id)
     }
 
-    if (isOverdue && !task.overdueNotifiedAt) {
+    if (settings.notifications.overdue && isOverdue && !task.overdueNotifiedAt) {
       showNotification(`${APP_NAME} — задача просрочена`, `Срок задачи «${task.title}» уже истёк.`)
       await markOverdueNotified(task.id)
     }
@@ -81,10 +87,13 @@ export const startNotificationScheduler = (): void => {
     return
   }
 
+  const settings = getSettingsSync()
+  const intervalMs = Math.max(10, settings.notifications.checkIntervalSeconds) * 1000
+
   checkTaskNotifications().catch(console.error)
   notificationTimer = setInterval(() => {
     checkTaskNotifications().catch(console.error)
-  }, 30_000)
+  }, intervalMs)
 }
 
 export const stopNotificationScheduler = (): void => {
@@ -94,4 +103,9 @@ export const stopNotificationScheduler = (): void => {
 
   clearInterval(notificationTimer)
   notificationTimer = null
+}
+
+export const restartNotificationScheduler = (): void => {
+  stopNotificationScheduler()
+  startNotificationScheduler()
 }

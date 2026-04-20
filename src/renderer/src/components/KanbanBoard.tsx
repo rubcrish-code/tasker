@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import type { AppSettings } from '@shared/settings.types'
 import type { KanbanColumnDto, TaskDto, TaskReorderItem } from '@shared/task.types'
 import { formatDateTime } from '../utils/date'
 import { checklistProgress } from '../utils/task'
@@ -22,6 +23,7 @@ import { CloseIcon, GripIcon } from './Icons'
 type KanbanBoardProps = {
   columns: KanbanColumnDto[]
   tasks: TaskDto[]
+  settings: AppSettings['kanban']
   onTaskEdit: (task: TaskDto) => void
   onReorder: (items: TaskReorderItem[]) => void
   onColumnCreate: (title: string, color: string) => void
@@ -199,6 +201,7 @@ const KanbanColumn = ({
 export const KanbanBoard = ({
   columns,
   tasks,
+  settings,
   onTaskEdit,
   onReorder,
   onColumnCreate,
@@ -213,6 +216,14 @@ export const KanbanBoard = ({
   const activeTask = tasks.find((task) => task.id === activeTaskId) ?? null
   const columnIdSet = useMemo(() => new Set(columns.map((column) => column.id)), [columns])
   const canCreateColumn = newColumnTitle.trim().length > 0
+  const visibleColumns = useMemo(() => {
+    if (settings.showEmptyColumns) {
+      return columns
+    }
+
+    const columnsWithTasks = columns.filter((column) => tasks.some((task) => task.columnId === column.id))
+    return columnsWithTasks.length > 0 ? columnsWithTasks : columns.slice(0, 1)
+  }, [columns, settings.showEmptyColumns, tasks])
 
   const clearDragState = (): void => {
     setActiveTaskId(null)
@@ -385,7 +396,7 @@ export const KanbanBoard = ({
         onDragEnd={handleDragEnd}
       >
         <div className="kanban-grid">
-          {columns.map((column) => {
+          {visibleColumns.map((column) => {
             const isPlaceholderColumn =
               Boolean(activeTask) && Boolean(dragPlacement) && dragPlacement?.targetColumnId === column.id && !dragPlacement.isSameColumn
 

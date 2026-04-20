@@ -1,0 +1,68 @@
+appId: com.tasker.desktop
+productName: Tasker
+copyright: Copyright (c) 2026 Tasker
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+  - node_modules/.prisma/client/**/*
+  - node_modules/@prisma/client/**/*
+  - node_modules/@prisma/engines/**/*
+
+extraResources:
+  - from: resources
+    to: resources
+  - from: node_modules/.prisma/client
+    to: app.asar.unpacked/node_modules/.prisma/client
+
+asar: true
+asarUnpack:
+  - node_modules/.prisma/**/*
+  - node_modules/@prisma/client/**/*
+  - node_modules/@prisma/engines/**/*
+
+afterExtract: scripts/after-extract.cjs
+
+artifactName: Tasker-${version}-${os}-${arch}.${ext}
+
+win:
+  icon: resources/tasker-icon.ico
+  signAndEditExecutable: false
+  requestedExecutionLevel: asInvoker
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Tasker
+  installerIcon: resources/tasker-icon.ico
+  uninstallerIcon: resources/tasker-icon.ico
+  installerHeaderIcon: resources/tasker-icon.ico
+
+portable:
+  artifactName: Tasker-${version}-portable.${ext}
+
+mac:
+  icon: resources/tasker-icon.png
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+
+dmg:
+  artifactName: Tasker-${version}-mac-${arch}.${ext}

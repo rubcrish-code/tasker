@@ -10,5 +10,12 @@ export const IPC_CHANNELS = {
   tagsUpdateColor: 'tags:update-color',
   columnsCreate: 'columns:create',
   columnsUpdate: 'columns:update',
-  columnsDelete: 'columns:delete'
+  columnsDelete: 'columns:delete',
+  settingsGet: 'settings:get',
+  settingsUpdate: 'settings:update',
+  settingsGetInfo: 'settings:get-info',
+  dataExport: 'data:export',
+  dataImport: 'data:import',
+  dataBackup: 'data:backup',
+  dataOpenFolder: 'data:open-folder'
 } as const

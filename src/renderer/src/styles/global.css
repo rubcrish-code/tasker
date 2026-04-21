@@ -2871,13 +2871,19 @@ textarea,
 
 /* Settings page and persisted UI preferences */
 .sidebar-footer {
+  display: grid;
+  flex: 0 0 auto;
   margin-top: auto;
+  padding-top: 8px;
 }
 
 .sidebar-settings-button {
-  display: flex;
+  display: flex !important;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
+  opacity: 1;
+  visibility: visible;
 }
 
 .sidebar-settings-button svg {

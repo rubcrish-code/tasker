@@ -1,7 +1,7 @@
 {
   "name": "tasker",
   "productName": "Tasker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tasker desktop MVP",
   "author": "Tasker",
   "main": "./out/main/index.js",

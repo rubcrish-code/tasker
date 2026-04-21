@@ -19,6 +19,11 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let backgroundHintShown = false
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+}
 
 const loadRenderer = (mainWindow: BrowserWindow): void => {
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
@@ -57,6 +62,10 @@ const showBackgroundHint = (): void => {
 }
 
 const showMainWindow = (): void => {
+  if (!app.isReady()) {
+    return
+  }
+
   if (!mainWindow || mainWindow.isDestroyed()) {
     createMainWindow()
     return
@@ -67,7 +76,14 @@ const showMainWindow = (): void => {
   }
 
   mainWindow.show()
+  mainWindow.moveTop()
   mainWindow.focus()
+}
+
+if (hasSingleInstanceLock) {
+  app.on('second-instance', () => {
+    showMainWindow()
+  })
 }
 
 const createTray = (): void => {
@@ -137,19 +153,21 @@ const createMainWindow = (): void => {
   })
 }
 
-app.whenReady().then(async () => {
-  registerTaskHandlers()
-  registerSettingsHandlers()
-  await ensureDatabase()
-  await ensureDefaultColumns()
-  createTray()
-  startNotificationScheduler()
-  createMainWindow()
+if (hasSingleInstanceLock) {
+  app.whenReady().then(async () => {
+    registerTaskHandlers()
+    registerSettingsHandlers()
+    await ensureDatabase()
+    await ensureDefaultColumns()
+    createTray()
+    startNotificationScheduler()
+    createMainWindow()
 
-  app.on('activate', () => {
-    showMainWindow()
+    app.on('activate', () => {
+      showMainWindow()
+    })
   })
-})
+}
 
 app.on('window-all-closed', () => {
   if (isQuitting && process.platform !== 'darwin') {
